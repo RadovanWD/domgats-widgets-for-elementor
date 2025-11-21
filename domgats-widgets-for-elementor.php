@@ -71,4 +71,3 @@ function domgats_widgets_enqueue_assets() {
 }
 
 add_action( 'wp_enqueue_scripts', 'domgats_widgets_enqueue_assets' );
-*** End Patch
