@@ -28,6 +28,7 @@ class Plugin_Loader {
 	 * Load required files.
 	 */
 	private function includes() {
+		require_once DOMGATS_WIDGETS_PATH . 'includes/class-domgats-rest-controller.php';
 		require_once DOMGATS_WIDGETS_PATH . 'includes/class-domgats-base-widget.php';
 		require_once DOMGATS_WIDGETS_PATH . 'includes/widgets/class-domgats-dynamic-filter-grid.php';
 	}
@@ -39,6 +40,7 @@ class Plugin_Loader {
 		add_action( 'elementor/widgets/register', [ $this, 'register_widgets' ] );
 		add_action( 'elementor/frontend/after_register_scripts', [ $this, 'register_frontend_assets' ] );
 		add_action( 'elementor/editor/after_enqueue_scripts', [ $this, 'enqueue_editor_assets' ] );
+		add_action( 'init', [ $this, 'boot_rest' ] );
 	}
 
 	/**
@@ -68,6 +70,19 @@ class Plugin_Loader {
 			DOMGATS_WIDGETS_VERSION,
 			true
 		);
+
+		wp_localize_script(
+			'domgats-widgets',
+			'domgatsWidgetsData',
+			[
+				'restUrl' => esc_url_raw( rest_url( Rest_Controller::REST_NAMESPACE . '/grid' ) ),
+				'nonce'   => wp_create_nonce( 'wp_rest' ),
+				'i18n'    => [
+					'loading'  => __( 'Loading...', 'domgats-widgets-for-elementor' ),
+					'noResult' => __( 'No results found.', 'domgats-widgets-for-elementor' ),
+				],
+			]
+		);
 	}
 
 	/**
@@ -76,5 +91,12 @@ class Plugin_Loader {
 	public function enqueue_editor_assets() {
 		wp_enqueue_style( 'domgats-widgets' );
 		wp_enqueue_script( 'domgats-widgets' );
+	}
+
+	/**
+	 * Boot REST controller.
+	 */
+	public function boot_rest() {
+		new Rest_Controller();
 	}
 }

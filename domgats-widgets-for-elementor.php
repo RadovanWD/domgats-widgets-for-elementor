@@ -4,7 +4,7 @@
  * Description: A suite of advanced widgets for Elementor, starting with the Dynamic Filter Grid.
  * Plugin URI:  https://example.com
  * Author:      DomGat
- * Version:     0.1.0
+ * Version:     1.0.0
  * Text Domain: domgats-widgets-for-elementor
  *
  * @package DomGats\Widgets
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'DOMGATS_WIDGETS_VERSION', '0.1.0' );
+define( 'DOMGATS_WIDGETS_VERSION', '1.0.0' );
 define( 'DOMGATS_WIDGETS_PLUGIN_FILE', __FILE__ );
 define( 'DOMGATS_WIDGETS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DOMGATS_WIDGETS_URL', plugin_dir_url( __FILE__ ) );

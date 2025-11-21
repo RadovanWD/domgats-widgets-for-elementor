@@ -1,18 +1,27 @@
 === DomGat's Widgets for Elementor ===
 Contributors: domgat
-Tags: elementor, widgets, grid, filter, domgats
+Tags: elementor, widgets, grid, filter, ajax, masonry, slider
 Requires at least: 6.0
 Tested up to: 6.4
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 1.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-An Elementor extension that introduces a Dynamic Filter Grid widget with a foundation for future advanced widgets.
+An Elementor extension that introduces a powerful Dynamic Filter Grid widget with AJAX filtering, deep linking, load-more/infinite scroll, slider/masonry layouts, and Elementor template support.
 
 == Description ==
 
-DomGat's Widgets for Elementor adds the Dynamic Filter Grid, helping you display posts, products, or custom post types in a responsive grid with sorting controls. This is an initial foundation release with extensible architecture for upcoming widgets.
+DomGat's Widgets for Elementor adds the Dynamic Filter Grid, helping you display posts, WooCommerce products, or custom post types in a responsive grid, masonry, or slider layout. Features include:
+
+* AJAX filtering with dropdowns/checkboxes/pills/tags and deep-linkable URLs.
+* Sorting (date/title/custom field), offset, include/exclude IDs, ACF/meta ordering.
+* Pagination types: numbers, load more, infinite scroll with lazy-loading images.
+* Layouts: grid, masonry, slider (Swiper-enabled), equal-height cards.
+* Elementor template per card or built-in card layout with up to 3 CTA buttons.
+* No-results template or custom message.
+* External JSON/REST source option for remote data.
+* Analytics hooks, animations, responsive controls, and accessibility-friendly markup.
 
 == Installation ==
 
@@ -26,7 +35,13 @@ DomGat's Widgets for Elementor adds the Dynamic Filter Grid, helping you display
 = Does this require Elementor? =
 Yes, Elementor is required and the plugin will alert you if it is missing.
 
+= Does it support ACF/meta sorting? =
+Yes. Choose a meta order option and provide the meta key; the widget will order by that value.
+
+= Can it fetch external data? =
+Yes. Enable External Data and provide a JSON endpoint (with optional dot-notation path).
+
 == Changelog ==
 
-= 0.1.0 =
-* Initial scaffold with Dynamic Filter Grid widget, shared base class, loader, and assets.
+= 1.0.0 =
+* Full production build: AJAX filtering/sorting, load more/infinite scroll, deep linking, slider/masonry layouts, animations, CTA buttons, Elementor templates, external JSON, analytics hooks, and accessibility improvements.

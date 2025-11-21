@@ -130,4 +130,87 @@ abstract class Domgats_Base_Widget extends Widget_Base {
 			]
 		);
 	}
+
+	/**
+	 * Return available Elementor templates (loop capable).
+	 *
+	 * @return array
+	 */
+	protected function get_elementor_templates() {
+		$options = [ '0' => __( '— Select Template —', 'domgats-widgets-for-elementor' ) ];
+
+		$templates = get_posts(
+			[
+				'post_type'      => 'elementor_library',
+				'post_status'    => 'publish',
+				'posts_per_page' => 200,
+				'orderby'        => 'title',
+				'order'          => 'ASC',
+			]
+		);
+
+		foreach ( $templates as $template ) {
+			$options[ $template->ID ] = $template->post_title;
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Whether ACF is available.
+	 *
+	 * @return bool
+	 */
+	protected function is_acf_active() {
+		return function_exists( 'acf_get_field_groups' );
+	}
+
+	/**
+	 * Check conditional rendering rules.
+	 *
+	 * @param array $settings Widget settings.
+	 *
+	 * @return bool
+	 */
+	protected function passes_visibility_rules( array $settings ) {
+		if ( ! empty( $settings['visibility_logged_in_only'] ) && ! is_user_logged_in() ) {
+			return false;
+		}
+
+		if ( ! empty( $settings['visibility_roles'] ) && is_array( $settings['visibility_roles'] ) ) {
+			$user        = wp_get_current_user();
+			$allowed     = array_map( 'sanitize_text_field', $settings['visibility_roles'] );
+			$user_roles  = (array) $user->roles;
+			$has_allowed = array_intersect( $allowed, $user_roles );
+
+			if ( empty( $has_allowed ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Provide common animation-related CSS class names.
+	 *
+	 * @param string $style Animation style.
+	 *
+	 * @return string
+	 */
+	protected function get_animation_class( $style ) {
+		$allowed = [
+			'none',
+			'fade',
+			'slide-up',
+			'slide-right',
+			'zoom-in',
+		];
+
+		if ( ! in_array( $style, $allowed, true ) ) {
+			return '';
+		}
+
+		return 'none' === $style ? '' : 'domgats-animate domgats-animate--' . $style;
+	}
 }
