@@ -1377,6 +1377,9 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 	 */
 	private function build_query_args( array $settings, array $filters, $page ) {
 		$post_type  = $settings['query_post_type'] ?? 'post';
+		if ( empty( $post_type ) || ! post_type_exists( $post_type ) ) {
+			$post_type = 'post';
+		}
 		$per_page   = ( 'numbers' === ( $settings['pagination_type'] ?? 'numbers' ) )
 			? (int) ( $settings['query_posts_per_page'] ?? 6 )
 			: (int) ( $settings['items_per_load'] ?? ( $settings['query_posts_per_page'] ?? 6 ) );
@@ -1402,7 +1405,13 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'orderby'        => $orderby,
 			'order'          => $order,
 			'offset'         => $offset,
+			'ignore_sticky_posts' => true,
 		];
+
+		// Avoid rendering the current page inside its own grid when the post type is not a page/product.
+		if ( get_the_ID() && 'page' !== $post_type ) {
+			$args['post__not_in'] = [ get_the_ID() ];
+		}
 
 		if ( 'meta_value' === $orderby || 'meta_value_num' === $orderby ) {
 			$args['meta_key'] = $meta_key;
