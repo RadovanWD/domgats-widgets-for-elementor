@@ -39,6 +39,18 @@ function domgats_widgets_init() {
 		return;
 	}
 
+	// Delay bootstrap until Elementor is initialized to ensure classes exist.
+	add_action( 'elementor/init', 'domgats_widgets_bootstrap', 20 );
+}
+
+/**
+ * Bootstrap plugin components when Elementor is ready.
+ */
+function domgats_widgets_bootstrap() {
+	if ( ! class_exists( '\Elementor\Widget_Base' ) ) {
+		return;
+	}
+
 	// Load translations.
 	load_plugin_textdomain( 'domgats-widgets-for-elementor', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
 
@@ -48,7 +60,8 @@ function domgats_widgets_init() {
 	new \DomGats\Widgets\Plugin_Loader();
 }
 
-add_action( 'plugins_loaded', 'domgats_widgets_init' );
+// Ensure Elementor is fully loaded before bootstrapping.
+add_action( 'plugins_loaded', 'domgats_widgets_init', 20 );
 
 /**
  * Enqueue shared assets.
