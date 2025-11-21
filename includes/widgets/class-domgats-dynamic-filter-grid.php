@@ -95,7 +95,7 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 				'label'   => __( 'Source', 'domgats-widgets-for-elementor' ),
 				'type'    => Controls_Manager::SELECT2,
 				'options' => $this->get_public_post_types(),
-				'default' => 'post',
+				'default' => class_exists( 'WooCommerce' ) ? 'product' : 'post',
 			]
 		);
 
@@ -147,8 +147,11 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'query_include_ids',
 			[
 				'label'       => __( 'Include IDs', 'domgats-widgets-for-elementor' ),
-				'type'        => Controls_Manager::TEXT,
-				'description' => __( 'Comma-separated list of post IDs to include.', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_posts_options(),
+				'multiple'    => true,
+				'label_block' => true,
+				'description' => __( 'Select posts/products to force-include.', 'domgats-widgets-for-elementor' ),
 			]
 		);
 
@@ -156,8 +159,11 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'query_exclude_ids',
 			[
 				'label'       => __( 'Exclude IDs', 'domgats-widgets-for-elementor' ),
-				'type'        => Controls_Manager::TEXT,
-				'description' => __( 'Comma-separated list of post IDs to exclude.', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_posts_options(),
+				'multiple'    => true,
+				'label_block' => true,
+				'description' => __( 'Select posts/products to exclude.', 'domgats-widgets-for-elementor' ),
 			]
 		);
 
@@ -165,8 +171,11 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'query_pinned_ids',
 			[
 				'label'       => __( 'Pin/Promote IDs', 'domgats-widgets-for-elementor' ),
-				'type'        => Controls_Manager::TEXT,
-				'description' => __( 'Comma-separated post IDs that should appear first (page 1 only). Counts toward items per page.', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_posts_options(),
+				'multiple'    => true,
+				'label_block' => true,
+				'description' => __( 'Select posts/products that should appear first (page 1 only). Counts toward items per page.', 'domgats-widgets-for-elementor' ),
 			]
 		);
 
@@ -213,6 +222,69 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 				'condition' => [
 					'query_orderby' => [ 'meta_value', 'meta_value_num' ],
 				],
+			]
+		);
+
+		$this->add_control(
+			'query_exclude_terms',
+			[
+				'label'       => __( 'Exclude Terms', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_all_terms_options(),
+				'multiple'    => true,
+				'label_block' => true,
+				'description' => __( 'Exclude these terms from the query.', 'domgats-widgets-for-elementor' ),
+			]
+		);
+
+		$this->add_control(
+			'query_include_authors',
+			[
+				'label'       => __( 'Include Authors', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_authors_options(),
+				'multiple'    => true,
+				'label_block' => true,
+			]
+		);
+
+		$this->add_control(
+			'query_exclude_authors',
+			[
+				'label'       => __( 'Exclude Authors', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_authors_options(),
+				'multiple'    => true,
+				'label_block' => true,
+			]
+		);
+
+		$this->add_control(
+			'query_current_post_only',
+			[
+				'label'        => __( 'Current Post Only', 'domgats-widgets-for-elementor' ),
+				'type'         => Controls_Manager::SWITCHER,
+				'description'  => __( 'Return only the current post/page (useful for context loops).', 'domgats-widgets-for-elementor' ),
+				'default'      => '',
+			]
+		);
+
+		$this->add_control(
+			'query_ignore_sticky',
+			[
+				'label'   => __( 'Ignore Sticky Posts', 'domgats-widgets-for-elementor' ),
+				'type'    => Controls_Manager::SWITCHER,
+				'default' => 'yes',
+			]
+		);
+
+		$this->add_control(
+			'query_avoid_duplicates',
+			[
+				'label'       => __( 'Avoid Duplicates in Page', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SWITCHER,
+				'default'     => '',
+				'description' => __( 'Exclude posts already queried earlier on the page (uses main query globals).', 'domgats-widgets-for-elementor' ),
 			]
 		);
 
@@ -1381,10 +1453,16 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			return $this->build_external_items( $settings, $page );
 		}
 
-		$pinned_ids = [];
-		if ( ! empty( $settings['query_pinned_ids'] ) ) {
-			$pinned_ids = array_filter( array_map( 'absint', explode( ',', $settings['query_pinned_ids'] ) ) );
+		if ( ! empty( $settings['query_current_post_only'] ) && get_the_ID() ) {
+			return [
+				'items'     => [ $this->normalize_post_item( get_the_ID() ) ],
+				'total'     => 1,
+				'max_pages' => 1,
+				'page'      => 1,
+			];
 		}
+
+		$pinned_ids = $this->parse_ids_field( $settings['query_pinned_ids'] ?? [] );
 
 		$per_page = ( 'numbers' === ( $settings['pagination_type'] ?? 'numbers' ) )
 			? (int) ( $settings['query_posts_per_page'] ?? 6 )
@@ -1452,18 +1530,24 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 	 *
 	 * @return array
 	 */
-	private function normalize_post_item() {
+	private function normalize_post_item( $post_id = null ) {
+		$post_id = $post_id ? absint( $post_id ) : get_the_ID();
+
+		if ( ! $post_id ) {
+			return [];
+		}
+
 		$image = '';
-		if ( has_post_thumbnail() ) {
-			$image = get_the_post_thumbnail_url( get_the_ID(), 'large' );
+		if ( has_post_thumbnail( $post_id ) ) {
+			$image = get_the_post_thumbnail_url( $post_id, 'large' );
 		}
 
 		return [
-			'post'    => get_the_ID(),
-			'title'   => get_the_title(),
-			'link'    => get_permalink(),
-			'excerpt' => wp_trim_words( get_the_excerpt(), 22 ),
-			'meta'    => get_the_date(),
+			'post'    => $post_id,
+			'title'   => get_the_title( $post_id ),
+			'link'    => get_permalink( $post_id ),
+			'excerpt' => wp_trim_words( get_the_excerpt( $post_id ), 22 ),
+			'meta'    => get_the_date( '', $post_id ),
 			'image'   => $image,
 		];
 	}
@@ -1478,9 +1562,9 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 	 * @return array
 	 */
 	private function build_query_args( array $settings, array $filters, $page ) {
-		$post_type  = $settings['query_post_type'] ?? 'post';
+		$post_type  = $settings['query_post_type'] ?? ( class_exists( 'WooCommerce' ) ? 'product' : 'post' );
 		if ( empty( $post_type ) || ! post_type_exists( $post_type ) ) {
-			$post_type = 'post';
+			$post_type = class_exists( 'WooCommerce' ) ? 'product' : 'post';
 		}
 		$per_page   = ( 'numbers' === ( $settings['pagination_type'] ?? 'numbers' ) )
 			? (int) ( $settings['query_posts_per_page'] ?? 6 )
@@ -1507,12 +1591,12 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'orderby'        => $orderby,
 			'order'          => $order,
 			'offset'         => $offset,
-			'ignore_sticky_posts' => true,
+			'ignore_sticky_posts' => ( 'yes' === ( $settings['query_ignore_sticky'] ?? 'yes' ) ),
 		];
 
-		// Avoid rendering the current page inside its own grid when the post type is not a page/product.
-		if ( get_the_ID() && 'page' !== $post_type ) {
-			$args['post__not_in'] = [ get_the_ID() ];
+		// Avoid rendering the current page inside its own grid.
+		if ( get_the_ID() ) {
+			$args['post__not_in'] = array_unique( array_merge( $args['post__not_in'] ?? [], [ get_the_ID() ] ) );
 		}
 
 		if ( 'meta_value' === $orderby || 'meta_value_num' === $orderby ) {
@@ -1522,18 +1606,14 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			}
 		}
 
-		if ( ! empty( $settings['query_include_ids'] ) ) {
-			$ids = array_filter( array_map( 'absint', explode( ',', $settings['query_include_ids'] ) ) );
-			if ( $ids ) {
-				$args['post__in'] = $ids;
-			}
+		$include_ids = $this->parse_ids_field( $settings['query_include_ids'] ?? [] );
+		if ( $include_ids ) {
+			$args['post__in'] = $include_ids;
 		}
 
-		if ( ! empty( $settings['query_exclude_ids'] ) ) {
-			$ids = array_filter( array_map( 'absint', explode( ',', $settings['query_exclude_ids'] ) ) );
-			if ( $ids ) {
-				$args['post__not_in'] = $ids;
-			}
+		$exclude_ids = $this->parse_ids_field( $settings['query_exclude_ids'] ?? [] );
+		if ( $exclude_ids ) {
+			$args['post__not_in'] = array_unique( array_merge( $args['post__not_in'] ?? [], $exclude_ids ) );
 		}
 
 		$tax_query = [];
@@ -1555,6 +1635,16 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 				'field'    => 'term_id',
 				'terms'    => $filter_terms,
 				'operator' => ( 'AND' === ( $settings['filter_logic'] ?? 'OR' ) ) ? 'AND' : 'IN',
+			];
+		}
+
+		$exclude_terms = $settings['query_exclude_terms'] ?? [];
+		if ( ! empty( $exclude_terms ) && $taxonomy ) {
+			$tax_query[] = [
+				'taxonomy' => $taxonomy,
+				'field'    => 'term_id',
+				'terms'    => array_map( 'absint', (array) $exclude_terms ),
+				'operator' => 'NOT IN',
 			];
 		}
 
@@ -1597,6 +1687,22 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 				$args['meta_query'] = array_merge( [ 'relation' => 'AND' ], $meta_query );
 			} else {
 				$args['meta_query'] = $meta_query;
+			}
+		}
+
+		if ( ! empty( $settings['query_include_authors'] ) ) {
+			$args['author__in'] = array_filter( array_map( 'absint', (array) $settings['query_include_authors'] ) );
+		}
+
+		if ( ! empty( $settings['query_exclude_authors'] ) ) {
+			$args['author__not_in'] = array_filter( array_map( 'absint', (array) $settings['query_exclude_authors'] ) );
+		}
+
+		if ( 'yes' === ( $settings['query_avoid_duplicates'] ?? '' ) ) {
+			global $wp_query;
+			if ( $wp_query instanceof \WP_Query && ! empty( $wp_query->posts ) ) {
+				$seen = wp_list_pluck( $wp_query->posts, 'ID' );
+				$args['post__not_in'] = array_unique( array_merge( $args['post__not_in'] ?? [], $seen ) );
 			}
 		}
 
@@ -1739,6 +1845,12 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'query_include_ids',
 			'query_exclude_ids',
 			'query_pinned_ids',
+			'query_exclude_terms',
+			'query_include_authors',
+			'query_exclude_authors',
+			'query_current_post_only',
+			'query_ignore_sticky',
+			'query_avoid_duplicates',
 			'query_meta_key',
 			'query_meta_type',
 			'filter_enabled',
@@ -1873,6 +1985,70 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			foreach ( $terms as $id => $label ) {
 				$options[ $id ] = $label . ' (' . $tax . ')';
 			}
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Get authors list for selects.
+	 *
+	 * @return array
+	 */
+	private function get_authors_options() {
+		$users = get_users(
+			[
+				'who'    => 'authors',
+				'fields' => [ 'ID', 'display_name' ],
+			]
+		);
+
+		$options = [];
+		foreach ( $users as $user ) {
+			$options[ $user->ID ] = $user->display_name;
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Parse IDs field accepting arrays or comma-separated strings.
+	 *
+	 * @param mixed $value Value from settings.
+	 * @return array
+	 */
+	private function parse_ids_field( $value ) {
+		if ( is_array( $value ) ) {
+			return array_filter( array_map( 'absint', $value ) );
+		}
+
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			return array_filter( array_map( 'absint', explode( ',', $value ) ) );
+		}
+
+		return [];
+	}
+
+	/**
+	 * Get selectable posts/products for select controls.
+	 *
+	 * @return array
+	 */
+	private function get_posts_options() {
+		$posts = get_posts(
+			[
+				'post_type'      => 'any',
+				'posts_per_page' => 200,
+				'post_status'    => 'publish',
+				'orderby'        => 'title',
+				'order'          => 'ASC',
+				'fields'         => 'ids',
+			]
+		);
+
+		$options = [];
+		foreach ( $posts as $post_id ) {
+			$options[ $post_id ] = get_the_title( $post_id ) . ' (#' . $post_id . ')';
 		}
 
 		return $options;
