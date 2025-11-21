@@ -1,0 +1,882 @@
+**TL;DR**: Fatal happens because `\Elementor\Widget_Base` is required **before** Elementor loads. Fix: only `require` widget classes inside Elementor’s `elementor/widgets/register` hook (or after `elementor/loaded`). Below is a clean, production-ready plugin skeleton that:
+
+* Loads safely after Elementor, no fatals.
+* Registers assets + REST endpoint.
+* Implements the **Dynamic Filter Grid** with AJAX, deep-linking, pagination types, sort, basic ACF/meta order, filter UI, and CTA buttons—wired to your existing JS/CSS.  
+* Matches features described in your readme. 
+
+---
+
+### Plan (pseudocode)
+
+* Define constants, textdomain, and register assets (CSS/JS) and REST data in main plugin file.
+* On `plugins_loaded`: verify Elementor is active; if not, show admin notice and bail.
+* Instantiate `Plugin_Loader`.
+
+  * Hook `elementor/widgets/register` → lazy-require `Base_Widget` and `Dynamic_Filter_Grid`, then register.
+  * Hook `rest_api_init` → register `domgats/v1/grid` POST route handled by `Rest_Controller`.
+* `Base_Widget` extends Elementor `Widget_Base`; provides common helpers and shared style sections.
+* `Dynamic_Filter_Grid`:
+
+  * Controls: Source (post type), Taxonomy to filter, items per page, sort (date/title/meta), meta key, layout (grid/masonry/slider), columns per device, equal height, spacing, filter UI (dropdown/pills/checkboxes/tags), deep-link toggle, AND/OR logic, pagination type (numbers/load more/infinite), items per load, optional sort dropdown, CTA buttons (up to 3), no-results message, optional Elementor template ID for card.
+  * Render initial grid + filter bar; output wrapper with `data-domgats-grid` and JSON `data-config` expected by your JS; include loading layer + correct pagination markup placeholders.
+  * Reuse common CSS classes from your stylesheet.
+* `Rest_Controller`:
+
+  * Accept `{ settings, filters, page }`.
+  * Build `WP_Query` with tax/meta filters, ordering, paging.
+  * Return `{ html, pagination, page, max_pages }` markup aligned to your JS hooks/classes.
+* Keep comments sparse and focus on “why”.
+
+---
+
+```php
+<?php
+/**
+ * File: domgats-widgets-for-elementor/domgats-widgets-for-elementor.php
+ * Plugin Name: DomGat’s Widgets for Elementor
+ * Plugin URI:  https://example.com
+ * Description: Elementor extension with Dynamic Filter Grid (AJAX, deep-linking, load-more/infinite, masonry/slider).
+ * Version:     1.0.0
+ * Author:      DomGat
+ * Text Domain: domgats-widgets
+ * Requires PHP: 7.4
+ * Requires at least: 6.0
+ *
+ * @package DomGats\Widgets
+ */
+
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
+define( 'DOMGATS_WE_VER', '1.0.0' );
+define( 'DOMGATS_WE_FILE', __FILE__ );
+define( 'DOMGATS_WE_DIR', plugin_dir_path( __FILE__ ) );
+define( 'DOMGATS_WE_URL', plugin_dir_url( __FILE__ ) );
+define( 'DOMGATS_WE_SLUG', 'domgats-widgets-for-elementor' );
+
+add_action( 'plugins_loaded', 'domgats_widgets_init' );
+function domgats_widgets_init() {
+	// Load i18n.
+	load_plugin_textdomain( 'domgats-widgets', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+
+	// Hard-require Elementor presence.
+	if ( ! did_action( 'elementor/loaded' ) ) {
+		add_action( 'admin_notices', static function () {
+			echo '<div class="notice notice-error"><p><strong>DomGat’s Widgets for Elementor</strong> requires Elementor to be installed and active.</p></div>';
+		} );
+		return;
+	}
+
+	// Bootstrap loader.
+	require_once DOMGATS_WE_DIR . 'includes/class-domgats-plugin-loader.php';
+	new \DomGats\Widgets\Plugin_Loader();
+}
+
+/**
+ * Register (not always enqueue) assets + REST data. Widget will declare depends.
+ */
+add_action( 'wp_enqueue_scripts', 'domgats_widgets_register_assets' );
+function domgats_widgets_register_assets() {
+	// CSS
+	wp_register_style(
+		'domgats-widgets',
+		DOMGATS_WE_URL . 'assets/css/domgats-widgets.css',
+		[],
+		filemtime( DOMGATS_WE_DIR . 'assets/css/domgats-widgets.css' )
+	);
+	// JS depends on jQuery + Elementor frontend utils (for Swiper handle in editor/runtime).
+	wp_register_script(
+		'domgats-widgets',
+		DOMGATS_WE_URL . 'assets/js/domgats-widgets.js',
+		[ 'jquery', 'elementor-frontend' ],
+		filemtime( DOMGATS_WE_DIR . 'assets/js/domgats-widgets.js' ),
+		true
+	);
+
+	// Localize global REST data that your JS expects (fallbacks in JS already exist).
+	wp_localize_script(
+		'domgats-widgets',
+		'domgatsWidgetsData',
+		[
+			'restUrl' => esc_url_raw( rest_url( 'domgats/v1/grid' ) ),
+			'nonce'   => wp_create_nonce( 'wp_rest' ),
+		]
+	);
+}
+```
+
+```php
+<?php
+// File: domgats-widgets-for-elementor/includes/class-domgats-plugin-loader.php
+namespace DomGats\Widgets;
+
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
+final class Plugin_Loader {
+
+	public function __construct() {
+		// Register widgets only after Elementor has fully initialized its managers.
+		add_action( 'elementor/widgets/register', [ $this, 'on_widgets_register' ] );
+
+		// REST endpoint for AJAX rendering.
+		add_action( 'rest_api_init', [ $this, 'register_rest' ] );
+	}
+
+	public function on_widgets_register( $widgets_manager ) {
+		// Lazy-load ONLY when Elementor asks us to register; prevents Widget_Base fatals.
+		require_once DOMGATS_WE_DIR . 'includes/class-domgats-base-widget.php';
+		require_once DOMGATS_WE_DIR . 'includes/widgets/class-domgats-dynamic-filter-grid.php';
+
+		$widgets_manager->register( new \DomGats\Widgets\Widgets\Dynamic_Filter_Grid() );
+	}
+
+	public function register_rest() {
+		require_once DOMGATS_WE_DIR . 'includes/class-domgats-rest-controller.php';
+		( new Rest_Controller() )->register_routes();
+	}
+}
+```
+
+```php
+<?php
+// File: domgats-widgets-for-elementor/includes/class-domgats-base-widget.php
+namespace DomGats\Widgets;
+
+use Elementor\Controls_Manager;
+use Elementor\Group_Control_Background;
+use Elementor\Group_Control_Border;
+use Elementor\Group_Control_Box_Shadow;
+use Elementor\Group_Control_Typography;
+use Elementor\Widget_Base;
+
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
+abstract class Base_Widget extends Widget_Base {
+
+	// Keep common deps centralized.
+	public function get_style_depends() {
+		return [ 'domgats-widgets' ];
+	}
+	public function get_script_depends() {
+		return [ 'domgats-widgets' ];
+	}
+
+	// Common container/card/filter/pagination style controls (curated subset).
+	protected function add_common_style_sections() {
+		$this->start_controls_section( 'domgats_container_style', [
+			'label' => __( 'Container', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_STYLE,
+		] );
+		$this->add_group_control( Group_Control_Background::get_type(), [
+			'name'     => 'container_bg',
+			'selector' => '{{WRAPPER}} .domgats-widget-wrapper',
+		] );
+		$this->add_group_control( Group_Control_Border::get_type(), [
+			'name'     => 'container_border',
+			'selector' => '{{WRAPPER}} .domgats-widget-wrapper',
+		] );
+		$this->add_group_control( Group_Control_Box_Shadow::get_type(), [
+			'name'     => 'container_shadow',
+			'selector' => '{{WRAPPER}} .domgats-widget-wrapper',
+		] );
+		$this->add_responsive_control( 'container_padding', [
+			'label'      => __( 'Padding', 'domgats-widgets' ),
+			'type'       => Controls_Manager::DIMENSIONS,
+			'size_units' => [ 'px', '%', 'em' ],
+			'selectors'  => [
+				'{{WRAPPER}} .domgats-widget-wrapper' => 'padding: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};',
+			],
+		] );
+		$this->end_controls_section();
+
+		$this->start_controls_section( 'domgats_card_style', [
+			'label' => __( 'Cards', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_STYLE,
+		] );
+		$this->add_group_control( Group_Control_Typography::get_type(), [
+			'name'     => 'title_typo',
+			'label'    => __( 'Title Typography', 'domgats-widgets' ),
+			'selector' => '{{WRAPPER}} .domgats-card__title',
+		] );
+		$this->add_group_control( Group_Control_Typography::get_type(), [
+			'name'     => 'meta_typo',
+			'label'    => __( 'Meta Typography', 'domgats-widgets' ),
+			'selector' => '{{WRAPPER}} .domgats-card__meta',
+		] );
+		$this->end_controls_section();
+
+		$this->start_controls_section( 'domgats_filter_style', [
+			'label' => __( 'Filter Bar', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_STYLE,
+		] );
+		$this->add_group_control( Group_Control_Typography::get_type(), [
+			'name'     => 'filter_typo',
+			'selector' => '{{WRAPPER}} .domgats-filter__item, {{WRAPPER}} .domgats-filter select',
+		] );
+		$this->end_controls_section();
+
+		$this->start_controls_section( 'domgats_pagination_style', [
+			'label' => __( 'Pagination', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_STYLE,
+		] );
+		$this->add_group_control( Group_Control_Typography::get_type(), [
+			'name'     => 'pagination_typo',
+			'selector' => '{{WRAPPER}} .domgats-pagination',
+		] );
+		$this->end_controls_section();
+	}
+
+	/**
+	 * Render a fallback/empty card.
+	 */
+	protected function render_empty( $message ) {
+		echo '<div class="domgats-card domgats-card--empty" role="status" aria-live="polite">' . esc_html( $message ) . '</div>';
+	}
+}
+```
+
+```php
+<?php
+// File: domgats-widgets-for-elementor/includes/widgets/class-domgats-dynamic-filter-grid.php
+namespace DomGats\Widgets\Widgets;
+
+use DomGats\Widgets\Base_Widget;
+use Elementor\Controls_Manager;
+use Elementor\Group_Control_Image_Size;
+
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
+final class Dynamic_Filter_Grid extends Base_Widget {
+
+	public function get_name()   { return 'domgats-dynamic-filter-grid'; }
+	public function get_title()  { return __( 'Dynamic Filter Grid', 'domgats-widgets' ); }
+	public function get_icon()   { return 'eicon-post-list'; }
+	public function get_categories() { return [ 'general' ]; }
+
+	protected function register_controls() {
+		// Content → Query.
+		$this->start_controls_section( 'dg_query', [
+			'label' => __( 'Query Source', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_CONTENT,
+		] );
+
+		$this->add_control( 'post_type', [
+			'label'   => __( 'Post Type', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'post',
+			'options' => $this->get_public_post_types(),
+		] );
+
+		$this->add_control( 'filter_taxonomy', [
+			'label'   => __( 'Filter Taxonomy', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'category',
+			'options' => $this->get_all_taxonomies_options(),
+		] );
+
+		$this->add_control( 'posts_per_page', [
+			'label'   => __( 'Items per page', 'domgats-widgets' ),
+			'type'    => Controls_Manager::NUMBER,
+			'default' => 9,
+			'min'     => 1,
+			'max'     => 60,
+		] );
+
+		$this->add_control( 'query_orderby', [
+			'label'   => __( 'Order By', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'date',
+			'options' => [
+				'date'            => __( 'Date', 'domgats-widgets' ),
+				'title'           => __( 'Title', 'domgats-widgets' ),
+				'meta_value'      => __( 'Meta Value (Text)', 'domgats-widgets' ),
+				'meta_value_num'  => __( 'Meta Value (Number)', 'domgats-widgets' ),
+			],
+		] );
+
+		$this->add_control( 'query_order', [
+			'label'   => __( 'Order', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'DESC',
+			'options' => [ 'DESC' => 'DESC', 'ASC' => 'ASC' ],
+		] );
+
+		$this->add_control( 'meta_key', [
+			'label'       => __( 'Meta Key (for meta order)', 'domgats-widgets' ),
+			'type'        => Controls_Manager::TEXT,
+			'placeholder' => 'price | my_acf_key',
+		] );
+
+		$this->add_control( 'include_ids', [
+			'label'       => __( 'Include IDs (comma-sep.)', 'domgats-widgets' ),
+			'type'        => Controls_Manager::TEXT,
+		] );
+
+		$this->add_control( 'exclude_ids', [
+			'label'       => __( 'Exclude IDs (comma-sep.)', 'domgats-widgets' ),
+			'type'        => Controls_Manager::TEXT,
+		] );
+
+		$this->end_controls_section();
+
+		// Content → Filter Settings.
+		$this->start_controls_section( 'dg_filters', [
+			'label' => __( 'Filter Settings', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_CONTENT,
+		] );
+
+		$this->add_control( 'enable_filters', [
+			'label'        => __( 'Enable Filters', 'domgats-widgets' ),
+			'type'         => Controls_Manager::SWITCHER,
+			'label_on'     => __( 'Yes', 'domgats-widgets' ),
+			'label_off'    => __( 'No', 'domgats-widgets' ),
+			'return_value' => 'yes',
+			'default'      => 'yes',
+		] );
+
+		$this->add_control( 'filter_ui', [
+			'label'   => __( 'Filter UI', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'pills',
+			'options' => [
+				'dropdown'  => __( 'Dropdown', 'domgats-widgets' ),
+				'checkbox'  => __( 'Checkboxes', 'domgats-widgets' ),
+				'pills'     => __( 'Pills', 'domgats-widgets' ),
+				'tags'      => __( 'Tags', 'domgats-widgets' ),
+			],
+			'condition' => [ 'enable_filters' => 'yes' ],
+		] );
+
+		$this->add_control( 'filter_multi_logic', [
+			'label'   => __( 'Multi-Filter Logic', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'OR',
+			'options' => [ 'OR' => 'OR', 'AND' => 'AND' ],
+			'condition' => [ 'enable_filters' => 'yes' ],
+		] );
+
+		$this->add_control( 'show_all_option', [
+			'label'        => __( 'Show “All” Option', 'domgats-widgets' ),
+			'type'         => Controls_Manager::SWITCHER,
+			'return_value' => 'yes',
+			'default'      => 'yes',
+			'condition'    => [ 'enable_filters' => 'yes' ],
+		] );
+
+		$this->add_control( 'deep_link', [
+			'label'        => __( 'Deep Linking (query string)', 'domgats-widgets' ),
+			'type'         => Controls_Manager::SWITCHER,
+			'return_value' => 'yes',
+			'default'      => '',
+			'condition'    => [ 'enable_filters' => 'yes' ],
+		] );
+
+		$this->end_controls_section();
+
+		// Content → Layout & Pagination.
+		$this->start_controls_section( 'dg_layout', [
+			'label' => __( 'Layout & Pagination', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_CONTENT,
+		] );
+
+		$this->add_control( 'layout', [
+			'label'   => __( 'Layout', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'grid',
+			'options' => [
+				'grid'    => __( 'Grid', 'domgats-widgets' ),
+				'masonry' => __( 'Masonry', 'domgats-widgets' ),
+				'slider'  => __( 'Slider', 'domgats-widgets' ),
+			],
+		] );
+
+		$this->add_responsive_control( 'columns', [
+			'label'   => __( 'Columns', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => '3',
+			'options' => [ '1' => '1', '2' => '2', '3' => '3', '4' => '4' ],
+			'selectors' => [
+				'{{WRAPPER}} .domgats-grid' => 'grid-template-columns: repeat({{VALUE}}, minmax(0, 1fr));',
+			],
+			'condition' => [ 'layout' => 'grid' ],
+		] );
+
+		$this->add_control( 'equal_height', [
+			'label'        => __( 'Equal Height', 'domgats-widgets' ),
+			'type'         => Controls_Manager::SWITCHER,
+			'return_value' => 'yes',
+			'default'      => 'yes',
+		] );
+
+		$this->add_control( 'show_sort', [
+			'label'        => __( 'Show Sort Dropdown', 'domgats-widgets' ),
+			'type'         => Controls_Manager::SWITCHER,
+			'return_value' => 'yes',
+			'default'      => '',
+		] );
+
+		$this->add_control( 'pagination_type', [
+			'label'   => __( 'Pagination', 'domgats-widgets' ),
+			'type'    => Controls_Manager::SELECT,
+			'default' => 'numbers',
+			'options' => [
+				'numbers'  => __( 'Standard Pagination', 'domgats-widgets' ),
+				'loadmore' => __( 'Load More', 'domgats-widgets' ),
+				'infinite' => __( 'Infinite Scroll', 'domgats-widgets' ),
+			],
+		] );
+
+		$this->add_control( 'items_per_load', [
+			'label'   => __( 'Items Per Load (AJAX)', 'domgats-widgets' ),
+			'type'    => Controls_Manager::NUMBER,
+			'default' => 9,
+			'min'     => 1,
+			'max'     => 60,
+		] );
+
+		$this->end_controls_section();
+
+		// Content → Card → CTA + No results.
+		$this->start_controls_section( 'dg_card', [
+			'label' => __( 'Card & CTA', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_CONTENT,
+		] );
+
+		$this->add_control( 'use_template_id', [
+			'label'       => __( 'Elementor Template ID (optional)', 'domgats-widgets' ),
+			'type'        => Controls_Manager::TEXT,
+			'placeholder' => '123',
+			'description' => __( 'If set, each card renders this template in the post context.', 'domgats-widgets' ),
+		] );
+
+		for ( $i = 1; $i <= 3; $i++ ) {
+			$this->add_control( "cta{$i}_text", [
+				'label' => sprintf( __( 'CTA %d Text', 'domgats-widgets' ), $i ),
+				'type'  => Controls_Manager::TEXT,
+			] );
+			$this->add_control( "cta{$i}_url", [
+				'label' => sprintf( __( 'CTA %d Link', 'domgats-widgets' ), $i ),
+				'type'  => Controls_Manager::URL,
+			] );
+		}
+
+		$this->add_control( 'no_results', [
+			'label'       => __( 'No Results Message', 'domgats-widgets' ),
+			'type'        => Controls_Manager::TEXT,
+			'default'     => __( 'No items found.', 'domgats-widgets' ),
+		] );
+
+		$this->end_controls_section();
+
+		// Shared style groups from Base_Widget.
+		$this->add_common_style_sections();
+
+		// Image size control for thumbnails.
+		$this->start_controls_section( 'dg_img', [
+			'label' => __( 'Image', 'domgats-widgets' ),
+			'tab'   => Controls_Manager::TAB_STYLE,
+		] );
+		$this->add_group_control( Group_Control_Image_Size::get_type(), [
+			'name'    => 'thumb',
+			'default' => 'medium',
+		] );
+		$this->end_controls_section();
+	}
+
+	protected function render() {
+		$s = $this->get_settings_for_display();
+
+		$widget_id   = $this->get_id();
+		$post_type   = $s['post_type'] ?: 'post';
+		$taxonomy    = $s['filter_taxonomy'] ?: 'category';
+		$ppp         = absint( $s['posts_per_page'] ?: 9 );
+		$orderby     = $s['query_orderby'] ?: 'date';
+		$order       = $s['query_order'] ?: 'DESC';
+		$meta_key    = trim( (string) ( $s['meta_key'] ?? '' ) );
+		$layout      = $s['layout'] ?: 'grid';
+		$eq_height   = ( 'yes' === ( $s['equal_height'] ?? '' ) );
+		$pagination  = $s['pagination_type'] ?: 'numbers';
+		$items_load  = absint( $s['items_per_load'] ?: $ppp );
+		$deep_link   = ( 'yes' === ( $s['deep_link'] ?? '' ) );
+		$show_sort   = ( 'yes' === ( $s['show_sort'] ?? '' ) );
+
+		$include     = $this->ids_from_csv( $s['include_ids'] ?? '' );
+		$exclude     = $this->ids_from_csv( $s['exclude_ids'] ?? '' );
+
+		$q_args = [
+			'post_type'      => $post_type,
+			'posts_per_page' => $ppp,
+			'paged'          => 1,
+			'post__in'       => $include ?: null,
+			'post__not_in'   => $exclude ?: null,
+			'orderby'        => $orderby,
+			'order'          => $order,
+			'ignore_sticky_posts' => true,
+		];
+		if ( $meta_key && in_array( $orderby, [ 'meta_value', 'meta_value_num' ], true ) ) {
+			$q_args['meta_key'] = $meta_key;
+		}
+
+		// Initial query (no filters yet; JS will take over).
+		$q = new \WP_Query( array_filter( $q_args, static fn( $v ) => null !== $v ) );
+
+		$config = [
+			'widgetId'       => $widget_id,
+			'deepLink'       => $deep_link,
+			'paginationType' => $pagination === 'loadmore' ? 'loadmore' : ( $pagination === 'infinite' ? 'infinite' : 'numbers' ),
+			'filters'        => [ 'terms' => [], 'meta' => [] ],
+			'settings'       => [
+				'post_type'      => $post_type,
+				'filter_tax'     => $taxonomy,
+				'query_orderby'  => $orderby,
+				'query_order'    => $order,
+				'meta_key'       => $meta_key,
+				'items_per_load' => $items_load,
+				'logic'          => $s['filter_multi_logic'] ?? 'OR',
+				'ppp'            => $ppp,
+				'layout'         => $layout,
+				'equal_height'   => $eq_height ? 1 : 0,
+				'use_template'   => absint( $s['use_template_id'] ?? 0 ),
+				'include'        => $include,
+				'exclude'        => $exclude,
+			],
+		];
+
+		// Wrapper + Filter bar.
+		$wrapper_classes = [ 'domgats-widget-wrapper' ];
+		echo '<div class="' . esc_attr( implode( ' ', $wrapper_classes ) ) . '" data-domgats-grid data-widget-id="' . esc_attr( $widget_id ) . '" data-config="' . esc_attr( wp_json_encode( $config ) ) . '">';
+
+		// Filter Bar
+		if ( 'yes' === ( $s['enable_filters'] ?? '' ) ) {
+			$this->render_filter_bar( $taxonomy, $s );
+		}
+
+		// Sort Dropdown
+		if ( $show_sort ) {
+			$this->render_sort_dropdown( $orderby, $order );
+		}
+
+		// Grid container classes.
+		$grid_classes = [ 'domgats-grid' ];
+		if ( 'masonry' === $layout ) { $grid_classes[] = 'domgats-masonry'; }
+		if ( 'slider' === $layout )  { $grid_classes[] = 'domgats-slider'; }
+		if ( $eq_height )            { $grid_classes[] = 'is-equal-height'; }
+
+		echo '<div class="' . esc_attr( implode( ' ', $grid_classes ) ) . '" data-layout="' . esc_attr( $layout ) . '">';
+
+		if ( $q->have_posts() ) {
+			while ( $q->have_posts() ) { $q->the_post(); $this->render_card( $s ); }
+			wp_reset_postdata();
+		} else {
+			$this->render_empty( $s['no_results'] ?? __( 'No items found.', 'domgats-widgets' ) );
+		}
+		echo '</div>'; // .domgats-grid
+
+		// Pagination scaffold (JS will replace).
+		$this->render_pagination_shell( $q->max_num_pages, 1, $pagination );
+
+		// Loading overlay.
+		echo '<div class="domgats-loading" aria-hidden="true"><div class="domgats-spinner" aria-hidden="true"></div></div>';
+
+		echo '</div>'; // wrapper
+	}
+
+	// ----- Helpers -----
+
+	private function get_public_post_types(): array {
+		$out = [];
+		foreach ( get_post_types( [ 'public' => true ], 'objects' ) as $type ) {
+			$out[ $type->name ] = $type->labels->singular_name ?: $type->name;
+		}
+		return $out;
+	}
+
+	private function get_all_taxonomies_options(): array {
+		$out = [];
+		foreach ( get_taxonomies( [], 'objects' ) as $tax ) {
+			$out[ $tax->name ] = $tax->label ?: $tax->name;
+		}
+		return $out;
+	}
+
+	private function ids_from_csv( string $csv ): array {
+		$ids = array_filter( array_map( 'absint', array_map( 'trim', explode( ',', $csv ) ) ) );
+		return array_values( array_unique( array_filter( $ids ) ) );
+	}
+
+	private function render_filter_bar( string $taxonomy, array $s ): void {
+		$terms = get_terms( [ 'taxonomy' => $taxonomy, 'hide_empty' => true ] );
+		if ( is_wp_error( $terms ) || empty( $terms ) ) { return; }
+
+		$ui = $s['filter_ui'] ?? 'pills';
+		echo '<div class="domgats-filter-bar" role="toolbar" aria-label="' . esc_attr__( 'Filters', 'domgats-widgets' ) . '">';
+		echo '<div class="domgats-filter domgats-filter-group domgats-filter--' . esc_attr( $ui ) . ' domgats-filter" data-filter="terms">';
+
+		if ( 'dropdown' === $ui ) {
+			echo '<select data-filter-control="terms" aria-label="' . esc_attr__( 'Filter by term', 'domgats-widgets' ) . '" multiple>';
+			if ( 'yes' === ( $s['show_all_option'] ?? '' ) ) {
+				echo '<option value="">' . esc_html__( 'All', 'domgats-widgets' ) . '</option>';
+			}
+			foreach ( $terms as $term ) {
+				echo '<option value="' . esc_attr( $term->term_id ) . '">' . esc_html( $term->name ) . '</option>';
+			}
+			echo '</select>';
+		} else {
+			if ( 'yes' === ( $s['show_all_option'] ?? '' ) ) {
+				echo '<button type="button" class="domgats-filter__item is-active" data-filter-click="terms" data-term="">' . esc_html__( 'All', 'domgats-widgets' ) . '</button>';
+			}
+			$multi = in_array( $ui, [ 'checkbox', 'tags' ], true ) ? '1' : '';
+			foreach ( $terms as $term ) {
+				printf(
+					'<button type="button" class="domgats-filter__item" data-filter-click="terms" %s data-term="%d">%s</button>',
+					$multi ? 'data-multi="1"' : '',
+					(int) $term->term_id,
+					esc_html( $term->name )
+				);
+			}
+		}
+
+		echo '</div></div>';
+	}
+
+	private function render_sort_dropdown( $orderby, $order ): void {
+		echo '<div class="domgats-sort" aria-label="' . esc_attr__( 'Sort', 'domgats-widgets' ) . '">';
+		echo '<select data-sort>';
+		$opts = [
+			'date|DESC'  => __( 'Newest', 'domgats-widgets' ),
+			'date|ASC'   => __( 'Oldest', 'domgats-widgets' ),
+			'title|ASC'  => __( 'Title A→Z', 'domgats-widgets' ),
+			'title|DESC' => __( 'Title Z→A', 'domgats-widgets' ),
+		];
+		foreach ( $opts as $val => $label ) {
+			$sel = ( $val === "{$orderby}|{$order}" ) ? ' selected' : '';
+			echo '<option value="' . esc_attr( $val ) . '"' . $sel . '>' . esc_html( $label ) . '</option>';
+		}
+		echo '</select></div>';
+	}
+
+	private function render_card( array $s ): void {
+		$template_id = absint( $s['use_template_id'] ?? 0 );
+
+		echo '<article class="domgats-card domgats-animate" data-animate-delay="40">';
+		if ( has_post_thumbnail() ) {
+			echo '<div class="domgats-card__thumb"><a href="' . esc_url( get_permalink() ) . '">';
+			echo wp_get_attachment_image( get_post_thumbnail_id(), $s['thumb_size'] ?? 'medium' );
+			echo '</a></div>';
+		}
+		echo '<div class="domgats-card__body">';
+
+		if ( $template_id ) {
+			// Why: let users fully control card markup with an Elementor template.
+			$backup = $GLOBALS['post'];
+			$GLOBALS['post'] = get_post(); setup_postdata( $GLOBALS['post'] );
+			echo \Elementor\Plugin::instance()->frontend->get_builder_content_for_display( $template_id );
+			wp_reset_postdata();
+			$GLOBALS['post'] = $backup;
+		} else {
+			echo '<h3 class="domgats-card__title"><a href="' . esc_url( get_permalink() ) . '">' . esc_html( get_the_title() ) . '</a></h3>';
+			echo '<p class="domgats-card__meta">' . esc_html( get_the_date() ) . '</p>';
+			echo '<p class="domgats-card__excerpt">' . esc_html( wp_trim_words( get_the_excerpt(), 24 ) ) . '</p>';
+		}
+
+		// CTA buttons.
+		echo '<div class="domgats-card__cta">';
+		for ( $i = 1; $i <= 3; $i++ ) {
+			$text = trim( (string) ( $s[ "cta{$i}_text" ] ?? '' ) );
+			$url  = $s[ "cta{$i}_url" ]['url'] ?? '';
+			if ( $text && $url ) {
+				printf(
+					'<a class="domgats-button" href="%s" target="%s" rel="%s"><span>%s</span></a>',
+					esc_url( $url ),
+					empty( $s[ "cta{$i}_url" ]['is_external'] ) ? '_self' : '_blank',
+					empty( $s[ "cta{$i}_url" ]['nofollow'] ) ? 'noopener' : 'nofollow noopener',
+					esc_html( $text )
+				);
+			}
+		}
+		echo '</div>'; // cta
+
+		echo '</div></article>';
+	}
+
+	private function render_pagination_shell( int $max_pages, int $page, string $type ): void {
+		echo '<div class="domgats-pagination" role="navigation" aria-label="' . esc_attr__( 'Pagination', 'domgats-widgets' ) . '">';
+		if ( 'loadmore' === $type ) {
+			$next = ( $page < $max_pages ) ? $page + 1 : 0;
+			if ( $next ) {
+				echo '<button class="domgats-load-more" data-next="' . (int) $next . '">' . esc_html__( 'Load More', 'domgats-widgets' ) . '</button>';
+			}
+		} elseif ( 'infinite' === $type ) {
+			$next = ( $page < $max_pages ) ? $page + 1 : 0;
+			echo '<div class="domgats-infinite-sentinel" data-next="' . (int) $next . '"></div>';
+		} else {
+			for ( $i = 1; $i <= max( 1, $max_pages ); $i++ ) {
+				$cls = $i === $page ? 'domgats-page is-active' : 'domgats-page';
+				echo '<button class="' . esc_attr( $cls ) . '" data-page="' . (int) $i . '">' . (int) $i . '</button>';
+			}
+		}
+		echo '</div>';
+	}
+}
+```
+
+```php
+<?php
+// File: domgats-widgets-for-elementor/includes/class-domgats-rest-controller.php
+namespace DomGats\Widgets;
+
+use WP_REST_Server;
+use WP_REST_Request;
+
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
+final class Rest_Controller {
+
+	public function register_routes(): void {
+		register_rest_route(
+			'domgats/v1',
+			'/grid',
+			[
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => [ $this, 'handle' ],
+				'permission_callback' => '__return_true', // Why: public content; relies on WP caps for private posts.
+				'args'                => [],
+			]
+		);
+	}
+
+	public function handle( WP_REST_Request $req ) {
+		$payload  = (array) $req->get_json_params();
+		$settings = (array) ( $payload['settings'] ?? [] );
+		$filters  = (array) ( $payload['filters'] ?? [] );
+		$page     = max( 1, absint( $payload['page'] ?? 1 ) );
+
+		$post_type   = sanitize_key( $settings['post_type'] ?? 'post' );
+		$taxonomy    = sanitize_key( $settings['filter_tax'] ?? 'category' );
+		$orderby     = sanitize_key( $settings['query_orderby'] ?? 'date' );
+		$order       = in_array( strtoupper( (string) ( $settings['query_order'] ?? 'DESC' ) ), [ 'ASC', 'DESC' ], true ) ? strtoupper( (string) $settings['query_order'] ) : 'DESC';
+		$meta_key    = sanitize_key( (string) ( $settings['meta_key'] ?? '' ) );
+		$items       = max( 1, absint( $settings['items_per_load'] ?? 9 ) );
+		$logic       = ( 'AND' === ( $settings['logic'] ?? 'OR' ) ) ? 'AND' : 'OR';
+		$layout      = in_array( (string) ( $settings['layout'] ?? 'grid' ), [ 'grid','masonry','slider' ], true ) ? (string) $settings['layout'] : 'grid';
+		$equal       = ! empty( $settings['equal_height'] );
+		$template_id = absint( $settings['use_template'] ?? 0 );
+		$include     = array_map( 'absint', (array) ( $settings['include'] ?? [] ) );
+		$exclude     = array_map( 'absint', (array) ( $settings['exclude'] ?? [] ) );
+
+		$term_ids = array_values( array_filter( array_map( 'absint', (array) ( $filters['terms'] ?? [] ) ) ) );
+
+		$q_args = [
+			'post_type'           => $post_type,
+			'posts_per_page'      => $items,
+			'paged'               => $page,
+			'ignore_sticky_posts' => true,
+			'post__in'            => $include ?: null,
+			'post__not_in'        => $exclude ?: null,
+			'orderby'             => $orderby,
+			'order'               => $order,
+		];
+
+		if ( $meta_key && in_array( $orderby, [ 'meta_value', 'meta_value_num' ], true ) ) {
+			$q_args['meta_key'] = $meta_key;
+		}
+
+		if ( $taxonomy && $term_ids ) {
+			$q_args['tax_query'] = [
+				[
+					'taxonomy' => $taxonomy,
+					'field'    => 'term_id',
+					'terms'    => $term_ids,
+					'operator' => ( 'AND' === $logic ) ? 'AND' : 'IN',
+				],
+			];
+		}
+
+		$q = new \WP_Query( array_filter( $q_args, static fn( $v ) => null !== $v ) );
+
+		ob_start();
+		$this->render_grid_items( $q, $template_id );
+		$html = ob_get_clean();
+
+		$pagination = $this->render_pagination( $q, $page, $layout, $equal, (string) ( $payload['paginationType'] ?? 'numbers' ) );
+
+		return [
+			'html'       => $html,
+			'pagination' => $pagination,
+			'page'       => $page,
+			'max_pages'  => (int) $q->max_num_pages,
+		];
+	}
+
+	private function render_grid_items( \WP_Query $q, int $template_id ): void {
+		if ( $q->have_posts() ) {
+			while ( $q->have_posts() ) {
+				$q->the_post();
+				echo '<article class="domgats-card domgats-animate" data-animate-delay="40">';
+				if ( has_post_thumbnail() ) {
+					echo '<div class="domgats-card__thumb"><a href="' . esc_url( get_permalink() ) . '">';
+					the_post_thumbnail( 'medium' );
+					echo '</a></div>';
+				}
+				echo '<div class="domgats-card__body">';
+				if ( $template_id ) {
+					$backup = $GLOBALS['post'];
+					$GLOBALS['post'] = get_post(); setup_postdata( $GLOBALS['post'] );
+					echo \Elementor\Plugin::instance()->frontend->get_builder_content_for_display( $template_id );
+					wp_reset_postdata();
+					$GLOBALS['post'] = $backup;
+				} else {
+					echo '<h3 class="domgats-card__title"><a href="' . esc_url( get_permalink() ) . '">' . esc_html( get_the_title() ) . '</a></h3>';
+					echo '<p class="domgats-card__meta">' . esc_html( get_the_date() ) . '</p>';
+					echo '<p class="domgats-card__excerpt">' . esc_html( wp_trim_words( get_the_excerpt(), 24 ) ) . '</p>';
+				}
+				echo '</div></article>';
+			}
+			wp_reset_postdata();
+		} else {
+			echo '<div class="domgats-card domgats-card--empty">' . esc_html__( 'No items found.', 'domgats-widgets' ) . '</div>';
+		}
+	}
+
+	private function render_pagination( \WP_Query $q, int $page, string $layout, bool $equal, string $type ): string {
+		ob_start();
+		echo '<div class="domgats-pagination">';
+		if ( 'loadmore' === $type ) {
+			$next = ( $page < $q->max_num_pages ) ? $page + 1 : 0;
+			if ( $next ) {
+				echo '<button class="domgats-load-more" data-next="' . (int) $next . '">' . esc_html__( 'Load More', 'domgats-widgets' ) . '</button>';
+			}
+		} elseif ( 'infinite' === $type ) {
+			$next = ( $page < $q->max_num_pages ) ? $page + 1 : 0;
+			echo '<div class="domgats-infinite-sentinel" data-next="' . (int) $next . '"></div>';
+		} else {
+			for ( $i = 1; $i <= max( 1, (int) $q->max_num_pages ); $i++ ) {
+				$cls = $i === $page ? 'domgats-page is-active' : 'domgats-page';
+				echo '<button class="' . esc_attr( $cls ) . '" data-page="' . (int) $i . '">' . (int) $i . '</button>';
+			}
+		}
+		echo '</div>';
+		return (string) ob_get_clean();
+	}
+}
+```
+
+---
+
+### Why the fatal occurred & what changed
+
+* **Before**: `class-domgats-base-widget.php` was `require_once` during plugin bootstrap, *before* Elementor had loaded its classes, so `Elementor\Widget_Base` didn’t exist yet.
+* **Now**: We only `require` widget files **inside** `elementor/widgets/register`, which runs after `elementor/loaded`. This guarantees `\Elementor\Widget_Base` exists → no fatal. (Your JS & CSS kept intact and wired.)  
+
+> Your readme’s feature list remains aligned: AJAX filtering, deep-linking, load more/infinite, masonry/slider, Elementor template support. The REST and front-end glue above exactly power those bullets. 
+
+---
+
+**Next steps**
+
+1. Replace your existing PHP files with the ones above (keep your current `assets/js/css` as-is).
+2. Activate plugin → Elementor → drop **Dynamic Filter Grid** widget → configure post type + taxonomy.
+3. Optional: set a template ID for per-card design.
+
+**a.** Want me to add ACF/meta **UI filters** (not just ordering) with AND/OR groups?
+**b.** Should I add WooCommerce presets (e.g., default taxonomy to `product_cat`, price/meta sort helpers)?

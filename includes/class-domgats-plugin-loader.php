@@ -38,6 +38,7 @@ class Plugin_Loader {
 	 */
 	private function hooks() {
 		add_action( 'elementor/widgets/register', [ $this, 'register_widgets' ] );
+		add_action( 'elementor/elements/categories_registered', [ $this, 'register_category' ] );
 		add_action( 'elementor/frontend/after_register_scripts', [ $this, 'register_frontend_assets' ] );
 		add_action( 'elementor/editor/after_enqueue_scripts', [ $this, 'enqueue_editor_assets' ] );
 		add_action( 'init', [ $this, 'boot_rest' ] );
@@ -50,6 +51,21 @@ class Plugin_Loader {
 	 */
 	public function register_widgets( $widgets_manager ) {
 		$widgets_manager->register( new Dynamic_Filter_Grid_Widget() );
+	}
+
+	/**
+	 * Register custom Elementor category.
+	 *
+	 * @param \Elementor\Elements_Manager $elements_manager Elementor elements manager.
+	 */
+	public function register_category( $elements_manager ) {
+		$elements_manager->add_category(
+			'domgats-widgets',
+			[
+				'title' => __( "DomGat's Widgets", 'domgats-widgets-for-elementor' ),
+				'icon'  => 'eicon-gallery-grid',
+			]
+		);
 	}
 
 	/**

@@ -53,6 +53,15 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 	}
 
 	/**
+	 * Place widget under custom category.
+	 *
+	 * @return array
+	 */
+	public function get_categories() {
+		return [ 'domgats-widgets' ];
+	}
+
+	/**
 	 * Register widget controls.
 	 */
 	protected function register_controls() {
@@ -1375,6 +1384,15 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 		$order      = $settings['query_order'] ?? 'DESC';
 		$meta_key   = $settings['query_meta_key'] ?? '';
 		$offset     = isset( $settings['query_offset'] ) ? (int) $settings['query_offset'] : 0;
+		$taxonomy   = $settings['query_taxonomy'] ?? '';
+
+		// Default to product_cat when querying products without a valid taxonomy.
+		if ( 'product' === $post_type && ( empty( $taxonomy ) || ! taxonomy_exists( $taxonomy ) ) ) {
+			$taxonomy = 'product_cat';
+		}
+		if ( $taxonomy && ! taxonomy_exists( $taxonomy ) ) {
+			$taxonomy = '';
+		}
 
 		$args = [
 			'post_type'      => $post_type,
@@ -1409,7 +1427,6 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 
 		$tax_query = [];
 		$terms     = $settings['query_terms'] ?? [];
-		$taxonomy  = $settings['query_taxonomy'] ?? '';
 
 		if ( ! empty( $terms ) && $taxonomy ) {
 			$tax_query[] = [
@@ -1706,6 +1723,10 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 	 * @return array
 	 */
 	private function get_terms_for_taxonomy( $taxonomy ) {
+		if ( ! $taxonomy || ! taxonomy_exists( $taxonomy ) ) {
+			return [];
+		}
+
 		$terms = get_terms(
 			[
 				'taxonomy'   => $taxonomy,
