@@ -162,6 +162,15 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 		);
 
 		$this->add_control(
+			'query_pinned_ids',
+			[
+				'label'       => __( 'Pin/Promote IDs', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::TEXT,
+				'description' => __( 'Comma-separated post IDs that should appear first (page 1 only). Counts toward items per page.', 'domgats-widgets-for-elementor' ),
+			]
+		);
+
+		$this->add_control(
 			'query_orderby',
 			[
 				'label'   => __( 'Order By', 'domgats-widgets-for-elementor' ),
@@ -295,6 +304,40 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 				'options'     => $this->get_all_terms_options(),
 				'multiple'    => false,
 				'label_block' => true,
+				'condition'   => [
+					'filter_enabled' => 'yes',
+				],
+			]
+		);
+
+		$preset = new Repeater();
+		$preset->add_control(
+			'preset_label',
+			[
+				'label'   => __( 'Preset Label', 'domgats-widgets-for-elementor' ),
+				'type'    => Controls_Manager::TEXT,
+				'default' => __( 'Preset', 'domgats-widgets-for-elementor' ),
+			]
+		);
+		$preset->add_control(
+			'preset_terms',
+			[
+				'label'       => __( 'Terms', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::SELECT2,
+				'options'     => $this->get_all_terms_options(),
+				'multiple'    => true,
+				'label_block' => true,
+			]
+		);
+
+		$this->add_control(
+			'filter_presets',
+			[
+				'label'       => __( 'Preset Filter Sets', 'domgats-widgets-for-elementor' ),
+				'type'        => Controls_Manager::REPEATER,
+				'fields'      => $preset->get_controls(),
+				'default'     => [],
+				'title_field' => '{{{ preset_label }}}',
 				'condition'   => [
 					'filter_enabled' => 'yes',
 				],
@@ -1002,6 +1045,20 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 
 		echo '<div class="domgats-filter-bar" role="toolbar" aria-label="' . esc_attr__( 'Content filters', 'domgats-widgets-for-elementor' ) . '">';
 
+		if ( ! empty( $settings['filter_presets'] ) && is_array( $settings['filter_presets'] ) ) {
+			echo '<div class="domgats-filter domgats-filter--presets" role="list">';
+			foreach ( $settings['filter_presets'] as $preset ) {
+				$label = $preset['preset_label'] ?? '';
+				$terms = isset( $preset['preset_terms'] ) ? array_filter( (array) $preset['preset_terms'] ) : [];
+				$data  = $terms ? implode( ',', array_map( 'absint', $terms ) ) : '';
+				if ( ! $label ) {
+					continue;
+				}
+				echo '<button type="button" class="domgats-filter__item" data-filter-preset="' . esc_attr( $data ) . '" role="listitem">' . esc_html( $label ) . '</button>';
+			}
+			echo '</div>';
+		}
+
 		if ( $terms ) {
 			$ui_type       = $settings['filter_ui'];
 			$current_terms = isset( $filters['terms'] ) ? (array) $filters['terms'] : [];
@@ -1324,12 +1381,52 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			return $this->build_external_items( $settings, $page );
 		}
 
-		$args  = $this->build_query_args( $settings, $filters, $page );
-		$query = new WP_Query( $args );
+		$pinned_ids = [];
+		if ( ! empty( $settings['query_pinned_ids'] ) ) {
+			$pinned_ids = array_filter( array_map( 'absint', explode( ',', $settings['query_pinned_ids'] ) ) );
+		}
 
-		$items = [];
+		$per_page = ( 'numbers' === ( $settings['pagination_type'] ?? 'numbers' ) )
+			? (int) ( $settings['query_posts_per_page'] ?? 6 )
+			: (int) ( $settings['items_per_load'] ?? ( $settings['query_posts_per_page'] ?? 6 ) );
 
-		if ( $query->have_posts() ) {
+		$pinned_items = [];
+		if ( $pinned_ids && 1 === (int) $page ) {
+			$pinned_query = new WP_Query(
+				[
+					'post__in'  => $pinned_ids,
+					'post_type' => $settings['query_post_type'] ?? 'post',
+					'post_status' => 'publish',
+					'orderby'   => 'post__in',
+					'posts_per_page' => count( $pinned_ids ),
+				]
+			);
+			if ( $pinned_query->have_posts() ) {
+				while ( $pinned_query->have_posts() ) {
+					$pinned_query->the_post();
+					$pinned_items[] = $this->normalize_post_item();
+				}
+				wp_reset_postdata();
+			}
+		}
+
+		$args = $this->build_query_args( $settings, $filters, $page );
+
+		if ( $pinned_items && 1 === (int) $page ) {
+			$args['posts_per_page'] = max( 0, ( (int) $args['posts_per_page'] ) - count( $pinned_items ) );
+			$args['post__not_in']   = array_unique(
+				array_merge(
+					$args['post__not_in'] ?? [],
+					$pinned_ids
+				)
+			);
+		}
+
+		$query = $args['posts_per_page'] > 0 ? new WP_Query( $args ) : null;
+
+		$items = $pinned_items;
+
+		if ( $query && $query->have_posts() ) {
 			while ( $query->have_posts() ) {
 				$query->the_post();
 				$items[] = $this->normalize_post_item();
@@ -1337,10 +1434,15 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			wp_reset_postdata();
 		}
 
+		$found_posts = ( $query instanceof WP_Query ) ? (int) $query->found_posts : 0;
+		$max_pages   = ( $query instanceof WP_Query ) ? (int) $query->max_num_pages : 1;
+
+		$total = $found_posts + count( $pinned_items );
+
 		return [
 			'items'     => $items,
-			'total'     => (int) $query->found_posts,
-			'max_pages' => (int) $query->max_num_pages,
+			'total'     => $total,
+			'max_pages' => $max_pages,
 			'page'      => (int) $page,
 		];
 	}
@@ -1636,6 +1738,7 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'query_offset',
 			'query_include_ids',
 			'query_exclude_ids',
+			'query_pinned_ids',
 			'query_meta_key',
 			'query_meta_type',
 			'filter_enabled',
@@ -1644,6 +1747,7 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			'filter_logic',
 			'filter_default',
 			'filter_deep_link',
+			'filter_presets',
 			'meta_filter_enable',
 			'meta_filter_key',
 			'meta_filter_ui',

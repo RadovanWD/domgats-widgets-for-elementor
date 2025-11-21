@@ -118,15 +118,41 @@
 	/**
 	 * Render loading placeholder.
 	 */
-	function showLoading( $widget ) {
+	function renderSkeleton( $widget ) {
+		const $grid = $widget.find( '.domgats-grid' );
+		const colsAttr = $grid.attr( 'style' ) || '';
+		const skeleton = document.createElement( 'div' );
+		skeleton.className = 'domgats-skeleton';
+
+		if ( colsAttr.includes( 'grid-template-columns' ) ) {
+			const match = colsAttr.match( /grid-template-columns:\s*repeat\((\d+)/ );
+			if ( match && match[1] ) {
+				skeleton.style.gridTemplateColumns = `repeat(${ match[1] }, minmax(0, 1fr))`;
+			}
+		}
+
+		for ( let i = 0; i < 6; i += 1 ) {
+			const card = document.createElement( 'div' );
+			card.className = 'domgats-skeleton__card';
+			skeleton.appendChild( card );
+		}
+
+		return skeleton;
+	}
+
+	function showLoading( $widget, withSkeleton = true ) {
 		const loading = $widget.find( '.domgats-loading' );
 		if ( loading.length ) {
 			loading.addClass( 'is-active' );
+			if ( withSkeleton && ! loading.find( '.domgats-skeleton' ).length ) {
+				loading.append( renderSkeleton( $widget ) );
+			}
 		}
 	}
 
 	function hideLoading( $widget ) {
 		$widget.find( '.domgats-loading' ).removeClass( 'is-active' );
+		$widget.find( '.domgats-skeleton' ).remove();
 	}
 
 	/**
@@ -189,7 +215,7 @@
 
 		const { $el, config } = ctx;
 		ctx.loading = true;
-		showLoading( $el );
+		showLoading( $el, ! append );
 
 		const body = {
 			settings: config.settings,
@@ -300,6 +326,38 @@
 			}
 			const ctx = widgets.get( widgetId );
 			ctx.filters = readFiltersFromUI( $widget, ctx.config );
+			if ( ctx.config.deepLink ) {
+				updateQueryString( ctx.filters );
+			}
+			dispatchHook( 'domgats:filter-change', { widgetId, filters: ctx.filters } );
+			fetchData( widgetId, 1, false );
+		} );
+
+		$widget.on( 'click', '[data-filter-preset]', function () {
+			const data = this.getAttribute( 'data-filter-preset' ) || '';
+			const terms = data ? data.split( ',' ).filter( Boolean ) : [];
+			const ctx = widgets.get( widgetId );
+
+			// Sync UI for button-based filters.
+			const $termButtons = $widget.find( '[data-filter-click="terms"]' );
+			if ( $termButtons.length ) {
+				$termButtons.removeClass( 'is-active' );
+				if ( ! terms.length ) {
+					$termButtons.filter( '[data-term=""]' ).addClass( 'is-active' );
+				} else {
+					terms.forEach( ( term ) => {
+						$termButtons.filter( `[data-term="${ term }"]` ).addClass( 'is-active' );
+					} );
+				}
+			}
+
+			// Sync dropdown UI if present.
+			const $termSelect = $widget.find( '[data-filter-control="terms"]' );
+			if ( $termSelect.length ) {
+				$termSelect.val( terms ).trigger( 'change' );
+			}
+
+			ctx.filters.terms = terms;
 			if ( ctx.config.deepLink ) {
 				updateQueryString( ctx.filters );
 			}

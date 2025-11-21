@@ -103,6 +103,7 @@ class Rest_Controller {
 			'query_offset',
 			'query_include_ids',
 			'query_exclude_ids',
+			'query_pinned_ids',
 			'query_meta_key',
 			'query_meta_type',
 			'filter_enabled',
