@@ -1348,12 +1348,10 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 			// Render Elementor template with current post context.
 			$post = get_post( $item['post'] );
 			if ( $post ) {
-				// Switch global post so dynamic tags inside the template use the item instead of the current page.
-				$elementor = \Elementor\Plugin::$instance;
-				$elementor->db->switch_to_post( $post->ID );
+				setup_postdata( $post );
 				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-				echo $elementor->frontend->get_builder_content_for_display( $settings['loop_template_id'] );
-				$elementor->db->restore_current_post();
+				echo \Elementor\Plugin::$instance->frontend->get_builder_content_for_display( $settings['loop_template_id'] );
+				wp_reset_postdata();
 				return;
 			}
 		}
