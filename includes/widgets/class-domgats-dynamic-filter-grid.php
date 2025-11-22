@@ -1998,8 +1998,8 @@ class Dynamic_Filter_Grid_Widget extends Domgats_Base_Widget {
 	private function get_authors_options() {
 		$users = get_users(
 			[
-				'who'    => 'authors',
-				'fields' => [ 'ID', 'display_name' ],
+				'capability' => 'edit_posts',
+				'fields'     => [ 'ID', 'display_name' ],
 			]
 		);
 
