@@ -28,9 +28,9 @@ class Plugin_Loader {
 	 * Load required files.
 	 */
 	private function includes() {
-		require_once DOMGATS_WIDGETS_PATH . 'includes/class-domgats-rest-controller.php';
-		require_once DOMGATS_WIDGETS_PATH . 'includes/class-domgats-base-widget.php';
-		require_once DOMGATS_WIDGETS_PATH . 'includes/widgets/class-domgats-dynamic-filter-grid.php';
+		require_once DGWFE_PATH . 'includes/class-domgats-rest-controller.php';
+		require_once DGWFE_PATH . 'includes/class-domgats-base-widget.php';
+		require_once DGWFE_PATH . 'includes/widgets/class-domgats-dynamic-filter-grid.php';
 	}
 
 	/**
@@ -72,32 +72,21 @@ class Plugin_Loader {
 	 * Register shared assets within Elementor context.
 	 */
 	public function register_frontend_assets() {
-		wp_register_style(
-			'domgats-widgets',
-			DOMGATS_WIDGETS_URL . 'assets/css/domgats-widgets.css',
-			[],
-			DOMGATS_WIDGETS_VERSION
-		);
+		dgwfe_register_shared_assets();
 
+		// Ensure Elementor assets load before ours when used inside the editor.
 		wp_register_script(
 			'domgats-widgets',
-			DOMGATS_WIDGETS_URL . 'assets/js/domgats-widgets.js',
+			DGWFE_URL . 'assets/js/domgats-widgets.js',
 			[ 'jquery', 'elementor-frontend' ],
-			DOMGATS_WIDGETS_VERSION,
+			dgwfe_asset_version( 'assets/js/domgats-widgets.js' ),
 			true
 		);
 
 		wp_localize_script(
 			'domgats-widgets',
 			'domgatsWidgetsData',
-			[
-				'restUrl' => esc_url_raw( rest_url( Rest_Controller::REST_NAMESPACE . '/grid' ) ),
-				'nonce'   => wp_create_nonce( 'wp_rest' ),
-				'i18n'    => [
-					'loading'  => __( 'Loading...', 'domgats-widgets-for-elementor' ),
-					'noResult' => __( 'No results found.', 'domgats-widgets-for-elementor' ),
-				],
-			]
+			dgwfe_get_script_data()
 		);
 	}
 
@@ -105,6 +94,7 @@ class Plugin_Loader {
 	 * Enqueue assets in the Elementor editor so widgets render correctly.
 	 */
 	public function enqueue_editor_assets() {
+		dgwfe_register_shared_assets();
 		wp_enqueue_style( 'domgats-widgets' );
 		wp_enqueue_script( 'domgats-widgets' );
 	}

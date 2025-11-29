@@ -26,6 +26,8 @@ class Rest_Controller {
 	 */
 	public function __construct() {
 		add_action( 'rest_api_init', [ $this, 'register_routes' ] );
+		add_action( 'wp_ajax_domgats_grid', [ $this, 'handle_ajax_action' ] );
+		add_action( 'wp_ajax_nopriv_domgats_grid', [ $this, 'handle_ajax_action' ] );
 	}
 
 	/**
@@ -65,6 +67,24 @@ class Rest_Controller {
 	 * @return bool
 	 */
 	public function permission_check( $request ) {
+		$nonce = $request->get_header( 'X-WP-Nonce' );
+
+		if ( ! $this->verify_nonce_value( $nonce ) ) {
+			return new \WP_Error(
+				'dgwfe_invalid_nonce',
+				__( 'Invalid request nonce.', 'domgats-widgets-for-elementor' ),
+				[ 'status' => rest_authorization_required_code() ]
+			);
+		}
+
+		if ( is_user_logged_in() && ! current_user_can( 'read' ) ) {
+			return new \WP_Error(
+				'dgwfe_forbidden',
+				__( 'You are not allowed to perform this request.', 'domgats-widgets-for-elementor' ),
+				[ 'status' => rest_authorization_required_code() ]
+			);
+		}
+
 		return apply_filters( 'domgats/widgets/rest_permission', true, $request );
 	}
 
@@ -83,6 +103,40 @@ class Rest_Controller {
 		$widget = new Dynamic_Filter_Grid_Widget();
 
 		return $widget->handle_ajax_query( $settings, $filters, $page );
+	}
+
+	/**
+	 * Handle admin-ajax fallback for grid requests.
+	 */
+	public function handle_ajax_action() {
+		$nonce = isset( $_REQUEST['nonce'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['nonce'] ) ) : '';
+
+		if ( ! $this->verify_nonce_value( $nonce ) ) {
+			wp_send_json_error(
+				[ 'message' => __( 'Invalid request nonce.', 'domgats-widgets-for-elementor' ) ],
+				rest_authorization_required_code()
+			);
+		}
+
+		if ( is_user_logged_in() && ! current_user_can( 'read' ) ) {
+			wp_send_json_error(
+				[ 'message' => __( 'You are not allowed to perform this request.', 'domgats-widgets-for-elementor' ) ],
+				rest_authorization_required_code()
+			);
+		}
+
+		$settings = $this->maybe_decode_param( $_POST['settings'] ?? [] );
+		$filters  = $this->maybe_decode_param( $_POST['filters'] ?? [] );
+		$page     = isset( $_POST['page'] ) ? max( 1, (int) $_POST['page'] ) : 1;
+
+		$widget   = new Dynamic_Filter_Grid_Widget();
+		$response = $widget->handle_ajax_query(
+			$this->sanitize_settings( (array) $settings ),
+			$this->sanitize_filters( (array) $filters ),
+			$page
+		);
+
+		wp_send_json_success( $response );
 	}
 
 	/**
@@ -217,5 +271,36 @@ class Rest_Controller {
 		}
 
 		return $this->sanitize_value( $value );
+	}
+
+	/**
+	 * Verify request nonce.
+	 *
+	 * @param string $nonce Nonce value.
+	 *
+	 * @return bool
+	 */
+	private function verify_nonce_value( $nonce ) {
+		return is_string( $nonce ) && wp_verify_nonce( $nonce, DGWFE_NONCE_ACTION );
+	}
+
+	/**
+	 * Decode JSON param if needed.
+	 *
+	 * @param mixed $value Incoming value.
+	 *
+	 * @return mixed
+	 */
+	private function maybe_decode_param( $value ) {
+		if ( is_string( $value ) ) {
+			$decoded = json_decode( wp_unslash( $value ), true );
+			return is_array( $decoded ) ? $decoded : [];
+		}
+
+		if ( is_array( $value ) ) {
+			return $value;
+		}
+
+		return [];
 	}
 }

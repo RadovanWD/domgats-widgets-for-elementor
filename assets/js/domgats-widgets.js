@@ -3,6 +3,19 @@
 
 	const widgets = new Map();
 
+	const DGWFE = ( window.DGWFE = window.DGWFE || {} );
+
+	const bus = {
+		on: ( event, handler ) => document.addEventListener( event, handler ),
+		off: ( event, handler ) => document.removeEventListener( event, handler ),
+		emit: ( event, detail ) => document.dispatchEvent( new CustomEvent( event, { detail } ) ),
+	};
+
+	DGWFE.on = bus.on;
+	DGWFE.off = bus.off;
+	DGWFE.emit = bus.emit;
+	DGWFE.state = { widgets };
+
 	/**
 	 * Safe JSON parse.
 	 */
@@ -55,6 +68,11 @@
 	 * Dispatch analytics hook.
 	 */
 	function dispatchHook( name, detail ) {
+		if ( window.DGWFE && typeof window.DGWFE.emit === 'function' ) {
+			window.DGWFE.emit( name, detail );
+			return;
+		}
+
 		document.dispatchEvent( new CustomEvent( name, { detail } ) );
 	}
 
@@ -214,50 +232,110 @@
 		}
 
 		const { $el, config } = ctx;
+		const shared = window.domgatsWidgetsData || {};
+
 		ctx.loading = true;
 		showLoading( $el, ! append );
 
-		const body = {
+		const requestPayload = {
 			settings: config.settings,
 			filters: ctx.filters,
 			page,
 		};
 
-		return fetch( config.restUrl || ( window.domgatsWidgetsData && window.domgatsWidgetsData.restUrl ), {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-WP-Nonce': config.nonce || ( window.domgatsWidgetsData && window.domgatsWidgetsData.nonce ) || '',
-			},
-			body: JSON.stringify( body ),
-		} )
-			.then( ( res ) => res.json() )
-			.then( ( data ) => {
-				const $grid = $el.find( '.domgats-grid' );
-				const $pagination = $el.find( '.domgats-pagination' );
+		const nonce = config.nonce || shared.nonce || '';
+		const restUrl = config.restUrl || shared.restUrl || '';
+		const ajaxUrl = config.ajaxUrl || shared.ajaxUrl || shared.adminAjax || '';
 
-				if ( append ) {
-					$grid.append( data.html );
-				} else {
-					$grid.html( data.html );
-				}
+		const onSuccess = ( data ) => {
+			const $grid = $el.find( '.domgats-grid' );
+			const $pagination = $el.find( '.domgats-pagination' );
+
+			if ( append ) {
+				$grid.append( data.html );
+			} else {
+				$grid.html( data.html );
+			}
+
+			if ( typeof data.pagination !== 'undefined' ) {
 				$pagination.replaceWith( data.pagination );
+			}
 
-				ctx.page = data.page;
-				ctx.maxPages = data.max_pages;
+			ctx.page = data.page;
+			ctx.maxPages = data.max_pages;
 
-				initAnimations( $el );
-				initSlider( $el );
-				attachInfiniteObserver( widgetId );
-				hideLoading( $el );
-				ctx.loading = false;
+			initAnimations( $el );
+			initSlider( $el );
+			attachInfiniteObserver( widgetId );
+			hideLoading( $el );
+			ctx.loading = false;
 
-				dispatchHook( 'domgats:grid:update', { widgetId, page: data.page } );
+			dispatchHook( 'domgats:grid:update', { widgetId, page: data.page } );
+			return data;
+		};
+
+		const onFailure = () => {
+			hideLoading( $el );
+			ctx.loading = false;
+		};
+
+		const requestRest = () => {
+			if ( ! restUrl ) {
+				return Promise.reject( new Error( 'missing_rest' ) );
+			}
+
+			return fetch( restUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-WP-Nonce': nonce,
+				},
+				credentials: 'same-origin',
+				body: JSON.stringify( requestPayload ),
 			} )
-			.catch( () => {
-				hideLoading( $el );
-				ctx.loading = false;
-			} );
+				.then( ( res ) => {
+					if ( ! res.ok ) {
+						throw new Error( 'rest_failed' );
+					}
+					return res.json();
+				} )
+				.then( onSuccess );
+		};
+
+		const requestAjax = () => {
+			if ( ! ajaxUrl ) {
+				return Promise.reject( new Error( 'missing_ajax' ) );
+			}
+
+			const params = new URLSearchParams();
+			params.append( 'action', 'domgats_grid' );
+			params.append( 'nonce', nonce );
+			params.append( 'page', page );
+			params.append( 'settings', JSON.stringify( requestPayload.settings ) );
+			params.append( 'filters', JSON.stringify( requestPayload.filters ) );
+
+			return fetch( ajaxUrl, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+				},
+				body: params.toString(),
+			} )
+				.then( ( res ) => res.json() )
+				.then( ( data ) => {
+					if ( data && data.success && data.data ) {
+						return onSuccess( data.data );
+					}
+					throw new Error( 'ajax_failed' );
+				} );
+		};
+
+		const preferAjax = ( config.transport || shared.transport ) === 'ajax';
+
+		return ( preferAjax ? requestAjax().catch( () => requestRest() ) : requestRest().catch( () => requestAjax() ) ).catch(
+			onFailure
+		);
 	}
 
 	/**
@@ -400,6 +478,12 @@
 		if ( ! config.widgetId ) {
 			return;
 		}
+
+		const shared = window.domgatsWidgetsData || {};
+		config.restUrl = config.restUrl || shared.restUrl;
+		config.ajaxUrl = config.ajaxUrl || shared.ajaxUrl || shared.adminAjax;
+		config.nonce = config.nonce || shared.nonce;
+		config.transport = config.transport || shared.transport || 'rest';
 
 		// Deep link override.
 		if ( config.deepLink ) {

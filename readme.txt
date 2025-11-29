@@ -23,6 +23,11 @@ DomGat's Widgets for Elementor adds the Dynamic Filter Grid, helping you display
 * External JSON/REST source option for remote data.
 * Analytics hooks, animations, responsive controls, and accessibility-friendly markup.
 
+= Transport & Security =
+* Uses the REST route `domgats-widgets/v1/grid` by default with a shared nonce (`wp_create_nonce( 'dgwfe-request' )`).
+* Falls back to `admin-ajax.php` via the `domgats_grid` action when REST is blocked.
+* Both transports sanitize input, require the nonce, and let you filter access with `domgats/widgets/rest_permission`; logged-in users must have the `read` capability.
+
 == Installation ==
 
 1. Upload `domgats-widgets-for-elementor` to the `/wp-content/plugins/` directory or install via the WordPress Plugins screen.

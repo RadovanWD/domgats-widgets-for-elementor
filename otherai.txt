@@ -1,0 +1,244 @@
+Below is a sequenced, AI-friendly checklist. It starts with **audit/verification** of what exists, then proceeds to **implement/fix** missing or broken parts. Zip packaging and Git deliverables are **removed** per your note. The plugin is assumed to run directly from `wp-content/plugins/domgats-widgets-for-elementor`.
+You can also see and edit the github repository 
+
+---
+
+$1
+
+### Steps
+
+1. In WP Admin → Tools/About, record **WordPress**, **PHP**, **Elementor**, and (if present) **WooCommerce** and **ACF** versions into a local log or option.
+2. Add activation checks: if Elementor missing, add admin notice and **skip** widget registration (no fatals).
+3. Decide transport: **use REST API** by default; keep `admin-ajax.php` fallback. Define nonce creation/verification and capability checks and document them.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Compare the on-disk tree to the structure above; create any missing directories and add `index.php` placeholders to prevent directory listing.
+2. Ensure `languages/` exists and prepare a POT file (can be empty initially). Keep path consistent with `load_plugin_textdomain`.
+3. Verify all include paths/autoload will resolve (`includes/...`). Fix casing and namespaces to match file names.
+
+Ensure the structure below exists (add missing items):
+
+```
+domgats-widgets-for-elementor/
+├── domgats-widgets-for-elementor.php
+├── includes/
+│   ├── class-domgats-plugin-loader.php
+│   ├── class-domgats-base-widget.php
+│   ├── templates/                 // PHP partials: grid, card, filter bar, pagination
+│   └── widgets/
+│       ├── class-domgats-dynamic-filter-grid.php
+│       └── (future widgets...)
+├── assets/
+│   ├── css/
+│   │   └── domgats-widgets.css
+│   └── js/
+│       └── domgats-widgets.js
+├── languages/                      // i18n
+└── readme.txt
+```
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Validate plugin header (name, URI optional, author, version) and **text domain = ****domgats-widgets-for-elementor**.
+2. Add `defined('ABSPATH') || exit;` guard; define constants (`DGWFE_VERSION`, `DGWFE_FILE`, `DGWFE_PATH`, `DGWFE_URL`).
+3. Hook `plugins_loaded` to check Elementor active; early-return with admin notice if not.
+4. `require_once` the loader (or init autoloader). Register/enqueue assets; version with `filemtime`.
+5. Call `load_plugin_textdomain( 'domgats-widgets-for-elementor', false, dirname( plugin_basename( DGWFE_FILE ) ) . '/languages' );`.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Standardize namespace: `DomGats\Widgets` across classes; rename files to `class-*.php` consistently.
+2. Implement lightweight PSR-4 autoloader (optional) or explicit `require_once` map in loader.
+3. In `DomGats_Plugin_Loader`, hook `elementor/widgets/register` to register the Dynamic Filter Grid; optionally hook `elementor/elements/categories_registered` to add a `DomGat` category.
+4. Manually include widget files from `includes/widgets/` and instantiate them.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Create class extending `\Elementor\Widget_Base`; add shared `register_controls_common()` to inject spacing/background/border/shadow/typography controls with responsive variants.
+2. Provide helpers: `get_responsive_columns()`, `render_icon()`, `render_button()`, attribute sanitizers/escapers.
+3. Expose hooks: `do_action( 'domgats/before_render', $this )` and `do_action( 'domgats/after_render', $this )`; filters to alter query args.
+4. Ensure children call parent helpers instead of duplicating style controls.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Create `assets/css/domgats-widgets.css` with BEM-style classes for container, card, filter bar, pagination, and skeleton states.
+2. Create `assets/js/domgats-widgets.js` with a namespaced IIFE `window.DGWFE` exposing an event bus (`on`, `off`, `emit`).
+3. Register but conditionally enqueue libraries: `masonry`, `imagesloaded`, `swiper` (only when selected by layout control).
+4. Add minimal ESLint/Stylelint configs (optional) and ensure no console errors in editor/front-end.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Implement `class-domgats-dynamic-filter-grid.php` with `get_name()`, `get_title()`, `get_icon()`, `get_categories()`, `get_keywords()`.
+2. Build **Content** controls: Post Type, Taxonomies, ACF fields (feature-gated), items per page, offset, include/exclude IDs, sorting (date/meta/ACF/price).
+3. Build **Filter Settings**: enable/disable, UI type (dropdown/checkbox/pills/tags), default selection, AND/OR logic, Show All, conditional per post type, **facet counts**, **preset filter sets**.
+4. Build **Layout**: Grid/Masonry/Slider; columns (per device); gap; equal height; loop template vs custom layout; **Card CTAs** (≤3) with conditional visibility.
+5. Build **Pagination & Loading**: pagination/load more/infinite scroll; items per load; loading animation; **skeleton toggles**.
+6. Build **No Results** controls and **Style** sections (container, card, filter bar, pagination, typography, hover states).
+7. In `render()`, delegate to PHP partials in `includes/templates/` for filter bar, grid, card, and pagination.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Implement `normalize_filter_args( $settings, $url_params )` to produce canonical args (types casted, defaults applied).
+2. Translate to `WP_Query` args: `post_type`, `tax_query`, `meta_query` with nested relations; support order/orderby including ACF/meta keys.
+3. If WooCommerce active, map price/sale fields safely; avoid directly touching Woo filters where possible.
+4. Implement optional external provider (REST/JSON) → normalize to the same **card model** used by SSR.
+5. Write basic unit tests (where possible) or debug page to print built queries for given settings.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Register REST routes under `domgats/v1`: `GET /grid`, `GET /facets`, `GET /preset`.
+2. Add argument schemas; sanitize inputs; verify `X-WP-Nonce` when personalized data is involved.
+3. Implement `admin-ajax.php` fallbacks for `domgats_grid`, `domgats_facets` actions when REST unavailable.
+4. In JS, maintain a central filter state; on changes, `history.pushState`/`replaceState`; parse URL on load to hydrate UI.
+5. Emit analytics JS events: `filters:changed`, `item:clicked`, `pagination:changed` for GA4/Pixel integrations.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Create PHP partials in `includes/templates/`: `filter-bar.php`, `grid.php`, `card.php`, `pagination.php` with overridable filters.
+2. Perform SSR for initial view using the same template parts used by AJAX responses to keep markup identical.
+3. Add ARIA roles/labels; use `aria-live="polite"` for result updates; move focus to grid on update; provide keyboardable controls.
+4. Implement skeleton placeholders and subtle transition classes for item entrance.
+5. Run basic Axe or Lighthouse a11y checks; address violations.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Implement cache key builder: stable JSON of normalized args → hashed string; store results via `wp_cache` or transients.
+2. Add invalidation hooks on `save_post`, `deleted_post`, `edited_terms`, and relevant meta updates to purge affected keys.
+3. Optimize queries: `fields => 'ids'` + `update_post_meta_cache/update_post_term_cache`; batch hydrate posts for rendering.
+4. Ensure images use `loading="lazy"` and proper `sizes/srcset`; enqueue only necessary scripts per layout.
+5. Measure P95 interaction (filter→results) on sample data; iterate where slow.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. **Pinned/Promoted items**: add control + rendering merge that lifts specific IDs into top slots while de-duplicating.
+2. **Synced Filter Bar**: create a separate Elementor widget; share an instance ID; broadcast events to one or many grids.
+3. **SEO snapshots**: allow admins to define canonical filter states; output canonical tags and optionally block non-canonical params with `noindex`.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Create test pages per combination in this matrix (post types, taxonomies, ACF fields, layouts, pagination modes, filter UIs).
+2. Verify deep-linking restores state; confirm No Results and Presets behave correctly.
+3. Exercise keyboard-only navigation and screen-reader announcements.
+4. Record performance timings; capture any PHP notices/warnings and console errors; fix regressions.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. (Optional) Build a small settings page for global toggles (caching, transport, analytics, add-ons); store in `options`.
+2. Add clear control descriptions/tooltips inside the widget; link to an example page.
+3. Update `readme.txt` with features, minimum requirements, and change notes relevant for local development.
+
+*
+
+---
+
+$1
+
+### Steps
+
+1. Verify plugin runs directly from `wp-content/plugins/domgats-widgets-for-elementor`; flush permalinks if REST routes 404.
+2. Smoke-test in Elementor editor: widget appears, controls persist, preview updates without errors.
+3. Ensure nonces, capability checks, and caches are active; disable verbose debugging on production.
+4. Write a short handover/checklist for future contributors (no packaging required).
+
+*
+
+---
+
+## Notes on Previously Suggested Additions (All included above)
+
+* Preset filter sets (Phase 6)
+* Server-side caching (Phase 10)
+* Facet/badge counts (Phase 6 & 10)
+* Visual rules builder for complex AND/OR (Phase 7)
+* Synced filter bar (Phase 11)
+* Pinned/promoted items (Phase 11)
+* SEO-friendly state snapshots (Phase 11)
+* Skeleton loaders & transitions (Phase 8/9)
+
+---
+
+### Success Criteria (High Level)
+
+* No fatals/notices on activation or render; safe degradation without Elementor/Woo/ACF.
+* Consistent SSR/AJAX markup; filter state is deep-linkable and restorable.
+* Measurable perf: cached responses; minimal queries; smooth UI.
+* Accessible controls with ARIA roles and keyboard navigation.
